@@ -1,84 +1,3 @@
-from flask import Flask, jsonify, request
-import requests
-import datetime
-
-app = Flask(__name__)
-
-# 🔗 Öffentliche API-Endpunkte der Exchanges
-API_URLS = {
-    "bybit": "https://api.bybit.com/v5/market/tickers?category=linear&symbol=",
-    "binance": "https://api.binance.com/api/v3/ticker/24hr?symbol=",
-    "okx": "https://www.okx.com/api/v5/market/ticker?instId=",
-    "kraken": "https://api.kraken.com/0/public/Ticker?pair=",
-    "bitget": "https://api.bitget.com/api/v2/market/ticker?symbol=",
-    "mexc": "https://api.mexc.com/api/v3/ticker/24hr?symbol=",
-    "coinbase": "https://api.exchange.coinbase.com/products/"
-}
-
-# ✅ Startseite – zeigt Status und verfügbare Exchanges
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "ok",
-        "message": "✅ Multi Exchange Proxy v2 läuft.",
-        "supported_exchanges": list(API_URLS.keys()),
-        "usage": "/api/v1/liquidations?exchange=binance&symbol=BTCUSDT"
-    })
-
-# 🧩 Haupt-Endpunkt – holt Marktdaten von der gewählten Exchange
-@app.route('/api/v1/liquidations', methods=['GET'])
-def get_market_data():
-    exchange = request.args.get('exchange', '').lower()
-    symbol = request.args.get('symbol', '').upper()
-
-    if exchange not in API_URLS:
-        return jsonify({
-            "error": "Exchange not supported.",
-            "available": list(API_URLS.keys())
-        }), 400
-
-    url = API_URLS[exchange] + symbol
-
-    try:
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        return jsonify({
-            "timestamp": datetime.datetime.utcnow().isoformat(),
-            "exchange": exchange,
-            "symbol": symbol,
-            "data": data
-        })
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "exchange": exchange,
-            "symbol": symbol
-        }), 500
-
-# 🧭 Healthcheck – Systemstatus für AlgoSync / SWINKINGKILLER
-@app.route('/envcheck')
-def envcheck():
-    return jsonify({
-        "status": "ok",
-        "server": "multi-proxy-v2",
-        "region": "Singapore",
-        "time": datetime.datetime.utcnow().isoformat()
-    })
-
-# 🧩 Zusatzroute – einfache Serverprüfung / Debug
-@app.route('/version')
-def version():
-    return jsonify({
-        "version": "2.0.0",
-        "build": "Stable",
-        "compatible_with": ["AlgoSync API", "SWINKINGKILLER V74+50"],
-        "author": "René"
-    })
-
-# 🚀 Serverstart
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
-
 # -------------------------------------------------------------
 # ✅ Multi Exchange Proxy v2.1.0 – SWINKINGKILLER Integration
 # -------------------------------------------------------------
@@ -117,7 +36,7 @@ def home():
 
 
 # -------------------------------------------------------------
-# 🧩 BASIS-FUNKTIONEN
+# 🧩 BASIS-ENDPUNKTE
 # -------------------------------------------------------------
 
 # 📈 Liquidations / Preisdaten
@@ -167,7 +86,7 @@ def get_funding():
 # 🧠 ERWEITERTE ENDPOINTS (Phase 1 – 2 – 3)
 # -------------------------------------------------------------
 
-# 📊 Volume / 24 h Stats
+# 📊 Volume / 24h Stats
 @app.route('/api/v1/volume', methods=['GET'])
 def get_volume():
     exchange = request.args.get('exchange', '').lower()
@@ -195,7 +114,7 @@ def get_volume():
         return jsonify({"error": str(e)}), 500
 
 
-# 🧭 Orderbook / Depth Data (Heatmap-Basis)
+# 🧭 Orderbook / Depth Data
 @app.route('/api/v1/orderbook', methods=['GET'])
 def get_orderbook():
     exchange = request.args.get('exchange', '').lower()
@@ -312,4 +231,66 @@ def get_exchange_time():
         "okx": "https://www.okx.com/api/v5/public/time",
         "kraken": "https://api.kraken.com/0/public/Time",
         "bitget": "https://api.bitget.com/api/v2/public/time",
-        "mexc": "https://api.mexc.com
+        "mexc": "https://api.mexc.com/api/v3/time",
+        "coinbase": "https://api.exchange.coinbase.com/time"
+    }
+    if exchange not in urls:
+        return jsonify({"error": "Exchange not supported"}), 400
+    try:
+        r = requests.get(urls[exchange], timeout=10)
+        data = r.json()
+        unix_time = None
+        if "serverTime" in data:
+            unix_time = int(data["serverTime"]) / 1000
+        elif "time" in data:
+            unix_time = int(data["time"]) / 1000
+        elif "data" in data and isinstance(data["data"], list) and "ts" in data["data"][0]:
+            unix_time = int(data["data"][0]["ts"]) / 1000
+        elif "result" in data and "unixtime" in data["result"]:
+            unix_time = int(data["result"]["unixtime"])
+        elif "data" in data and "serverTime" in data["data"]:
+            unix_time = int(data["data"]["serverTime"]) / 1000
+        elif "epoch" in data:
+            unix_time = float(data["epoch"])
+        if not unix_time:
+            return jsonify({"error": "Unable to parse server time"}), 500
+        utc_time = datetime.datetime.utcfromtimestamp(unix_time).replace(tzinfo=pytz.utc)
+        vienna_tz = pytz.timezone("Europe/Vienna")
+        eu_time = utc_time.astimezone(vienna_tz)
+        return jsonify({
+            "exchange": exchange,
+            "server_utc": utc_time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "server_eu": eu_time.strftime("%Y-%m-%d %H:%M:%S %Z%z"),
+            "server_timestamp": unix_time,
+            "proxy_utc": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# -------------------------------------------------------------
+# 🩺 ENV-CHECK & VERSION
+# -------------------------------------------------------------
+@app.route('/envcheck')
+def envcheck():
+    return jsonify({
+        "status": "ok",
+        "server": "multi-proxy-v2",
+        "region": "Singapore",
+        "time": datetime.datetime.utcnow().isoformat()
+    })
+
+
+@app.route('/version')
+def version():
+    return jsonify({
+        "version": "2.1.0",
+        "build": "Stable",
+        "compatible_with": ["AlgoSync API", "SWINKINGKILLER V74+51"],
+        "author": "René"
+    })
+
+
+# 🚀 SERVERSTART
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
